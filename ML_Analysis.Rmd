@@ -1,0 +1,373 @@
+---
+title: "Replication Assignment for the Course 'Machine Learning for Economists (57750)' "
+author: "Gilad Gaibel"
+date: "August 2019"
+output: html_document
+---
+
+### Introduction
+
+In the following document I extend some basic evaluations of an Israeli experimental data using Susan Athey's *Casual Tree* algorithm. The data I use is of an experiment designed to evaluate the Remote Work Grant (RWG) program. The RWG operates since November 2015. It is sponsored by the Israeli Employment Service (IES) and evaluated using a randomized controlled trial (RCT). The evaluation is carried out by three academic researchers: Dr. Naomi Gershoni (BGU), Dr. Itay Saporta-Eksten (TAU) and Dr. Analia Schlosser (TAU). I extend the check here for variance related to geographic regions and localities other than individual level controls, which had not been considered in previous anlyses. Below I will first produce a few basic results using the currently available data, then I will use the *Casual Tree* algorithm in order to analyze some of the heterogeneity in the observed treatment effect. 
+
+### RWG
+
+In the following subsection, I will provide relevant details about the RWG setting and context, the design of the program and the experimental design.
+
+The RWG is intended to compensate job seekers who suffer from high commuting costs to a relevant occupational center in terms of money and time. Naturally, since peripheral localities are usually with low accessibility and bad transportation infrastructure, the RWG is focused on job seekers residing in the poorer localities in the periphery of Israel. In addition, the program is focused on young and middle-aged workers (18-55), since the older workers are assumed to be less mobile and therefore less responsive to an intervention.
+
+After a qualification period of one month as a registered unemployed, a job seeker participating in the program which has been allocated to treatment, receives a notification about the grant and, if eligible, may claim it. Eligibility is conditional on finding a job outside the locality of residence within 3 months of the first notice, and on reporting of at least 11 work days in that job at each month. Eligible participants are granted with a monthly amount of 600 NIS for up to 5 months.
+
+The institutional setting in Israel divides the target population into two different groups: UI beneficiaries and Income Assistance (IA) beneficiaries. UI beneficiaries are usually newly unemployed who are entitled to UI benefits, and they must report each week to their local employment office in order to receive the benefits. IA beneficiaries are people with very low family income or without income, who are either unemployed or partially employed. In most cases, IA beneficiaries must also report each week to their local employment office in order to receive the benefits. Typically, UI beneficiaries and IA beneficiaries are very different in their socioeconomic and sociodemographic compositions, such that on average IA population is weaker than UI population. 
+
+The IES initiated the RWG in November 2015. At first, the RWG acted as a pilot within two employment offices. Since November 2016 the program gradually expanded to other employment offices, until it reached a total of 26 employment offices around the country in February 2017.
+
+The RWG is being evaluated by a clustered RCT. Each employment office is responsible for a predefined set of localities, and every job seeker must report to the office which corresponds to her locality of residence. Every few months, each employment office forms a list of potential job seekers who answers the qualification criteria and are divided into three pools: UI beneficiaries, IA recipients with seniority of less than six months in unemployment (IA flow), and IA recipients with seniority of more than six months in unemployment (IA stock). The listed job seekers are chosen at random out of all qualified job seekers registered in the office at the time, such that the amounts of those listed within each pool corresponds to a certain budget constrained quotas. Given these lists, the allocation to treatment is randomly determined within each employment office and within each pool. Therefore, the randomization is clustered at the pool, employment office and month of allocation level (the intersection of these three will be addressed as ‘allocation-unit’ henceforth). Those who were allocated to treatment may claim the RWG grant if eligible. Those who were allocated to control are handled in the offices exactly as they would have been without the program. 
+
+Data about the participants in the experiment is gathered in two channels – administrative data and voluntary surveys. The administrative data is from both the IES and the National Insurance Institute (NII). The surveys are conducted in three waves and they only cover a sample of the participants: the baseline survey is conducted before the allocation to treatment, the follow-up survey is conducted about three months after the allocation date, and the second follow-up is conducted about a year after the allocation date. 
+
+Using the data that was available at the time from the baseline and the follow-up surveys, combined with the relevant administrative data, the midterm report presented some preliminary findings of the effect of the program^[Gershoni N., Saporta-Eksten I., & Schlosser A. (2018). “Remote Work Grant: Midterm Report.” Working Paper No. 19, The Foerder Institute for Economic Research.]. It was found that the program led to a 3 percentage points decrease (significant at the 1% level) in reports to the local offices among the treatment group in the fifth month, and to a decrease of 0.08 months (significant at the 1% level) in cumulative reports to the local offices during the first five months since allocation. Assuming that no-appearance is a good enough proxy for a job seeker finding a job, these figures represent positive results. These results are also consistent qualitatively with the results of the TE estimation during the first eight months since allocation. Preliminary results from the surveys indicated that ten weeks after the allocation date, there was a significant increase in motivation and availability to work outside the locality of residence among the treatment group. These findings were based on comparison of means of the treatment and control groups within allocation-units. 
+
+### Initial Analysis - Basic Model, Data, Descriptive Statistics and Main Results
+
+The econometric model used for the basic evaluation is the following difference-in-means model:
+
+$$(DIM) \hspace{0.5cm} y_{i,a} = \alpha_0 + \alpha_1 T_{i,a} + \gamma X_i + \phi_a + \nu_{i,a}$$
+
+Where $y$ is a post-allocation outcome of interest, $T$ is a treatment status indicator, $X$ is a vector of controls, $\phi$ is an allocation-unit fixed-effects term, and $\nu$ is the idiosincratic error. The indices $i,a$ refer to individual and allocation-unit accordingly. Since I focus on geographic variance, I will control in the basic model for locality fixed-effects, as it is the most flexible geographic measure.
+
+Assuming conditional exogeneity of the treatment (given allocation-unit), which is justified by the controlled randomization design, $\alpha_1$ identifies the intent-to-treat effect. Controlling for the $X$s improves the accuracy of the estimation by accounting for outcome and background variables correlation.
+
+The data I use in this section is the administrative data from the IES. The data contains individual-level information about monthly reports to the local employment offices, as well as treatment status, allocation-unit and sociodemographic variables.
+
+I begin by importing the relevant libraries and the dataset:^[Note: The data is built as a panel, however the analysis in this document only measures cross-section estimates given specified dates.] ^[Some eligible job-seekers last report to their local employment office was before the date of their allocation, therefore they could not have been influenced by the intervention and so they are removed from the data.]
+
+```{r warning=FALSE, message=FALSE}
+
+pacman::p_load("readr",
+               "stats",
+               "fBasics",
+               "ggplot2",
+               "gtable",
+               "gridExtra",
+               "ggthemes",
+               "lfe",
+               "plm",
+               "StatMeasures",
+               "DescTools",
+               "broom",
+               "knitr",
+               "dplyr",
+               "tree",
+               "randomForest",
+               "causalTree") 
+
+# Loading the main dataset:
+load("Program_Data.Rdata")
+
+covariates <- list("female",
+                   "arab", 
+                   "ethiopian", 
+                   "married", 
+                   "children", 
+                   "immigrant", 
+                   "slfrep_healthlimit", 
+                   "age", 
+                   "single_parent", 
+                   "ultraorthodox",
+                   "total_pop_2017",
+                   "d_Tel_Aviv",
+                   "d_occ_cities", 
+                   "d_occ_loc", 
+                   "Avrg_dis_work", 
+                   "job_seekers_locality",
+                   "work_force_locality", 
+                   "unemployment_rate_locality", 
+                   "soc_index_todate")
+                   
+data <- Full_Data %>%
+  select("jskid","t", "relevant", "real_time", "treated",
+         "apr", "spells", "month_lishka_pool", "cityid",
+         "code", unlist(covariates)) %>%
+  filter(relevant==1)
+
+# Importing data about which localities are in the program
+  loc_in_program <- read_csv("Localities_in_program.csv")
+  loc_in_program$loc_in_program <- 1
+  data <- left_join(data, loc_in_program, "code")
+
+# Removing observations with problematic locality values 
+  data <- data %>% 
+    filter(loc_in_program==1)
+
+```
+
+Next, I present a basic balance test of the treatment that also serves as a basic descreptive statistics table:
+
+```{r warning=FALSE, message=FALSE}
+
+balance_T <- function(covariate_name, data, min_spells) {
+  
+  data_bt <- data %>%
+    filter(spells>=min_spells & t==min_spells)
+
+  attach(data_bt)
+  
+  model_temp <- felm(formula = get(covariate_name) ~ treated | month_lishka_pool| 0 | month_lishka_pool, data_bt)
+  
+  model_row <- tidy(model_temp) %>% 
+              mutate(Covariates = covariate_name) %>%
+              mutate(N = model_temp$N,
+                     Treatment = mean(get(covariate_name)[which(treated==1)], na.rm = TRUE),
+                     Control = mean(get(covariate_name)[which(treated==0)], na.rm = TRUE),
+                     Estimate = estimate) %>%
+              select(Covariates, Treatment, Control, Estimate, p.value, N)
+  assign(paste0("est_",covariate_name),model_row)
+  return(get(paste0("est_",covariate_name)))
+  
+  detach(data_bt)
+}
+
+kable(bind_rows(lapply(covariates, balance_T, data=data, min_spells = 5)), 
+      digits = 3,
+      caption = "Treatment Balance and Summary Statistics",
+      padding = 0)
+
+```
+
+The individual-level variables are self-explaining. The geographic variables are:
+
+ - `total_pop_2017` - Total population in the locality of residence in 2017.
+
+ - `d_Tel_Aviv` - Scaled aerial distance of the locality of residence from Tel Aviv.
+ 
+ - `d_occ_cities` - Scaled aerial distance of the locality of residence from the nearest large city.
+ 
+ - `d_occ_loc` - Scaled aerial distance of the locality of residence from the nearest occupational center.
+ 
+ - `Avrg_dis_work` - Average distance between home and work in KM (by region; 2015 data)
+ 
+ - `job_seekers_locality` - Amount of registered job seekers in the locality.
+ 
+ - `work_force_locality` - Size of the work force in the locality.
+ 
+ - `unemployment_rate_locality` - Unemployment rate in the locality.
+ 
+ - `soc_index_todate` - CBS Social index of locality or region (2015 data).
+
+ 
+This table presents statistics for job seekers who have a seniority of at least 5 months in the program. The two left columns present means of the relevant covariate within the treatment or the control group. The middle column presents the estimated treatment coefficient from a regression of the specified covaritate on the treatment and the allocation unit fixed-effects. Next to it, the P value of the test of the null hypothesis that the estmiated coefficient equals zero. The right column present the total amount of relevant observations.
+
+It can be seen that there are no statistically significant differences between the treatment and the control groups in each of the above covariates, and that the differences that do exist are very small. In addition, the population of the program is charcterized by regional low social index value (this is by the definition of the target population), and relatively high unemployment rates (relative to about 4.5 national unemployment rate). Participants are also more likely to be females, non-jews, married and with some self-reported health limitation.
+
+Here is some more descriptive statistics:
+
+```{r warning=FALSE, message=FALSE}
+
+desc <- data %>% 
+  filter(spells>=5 & t==5) %>%
+  ungroup() %>%
+  select(unlist(covariates)) %>%
+  basicStats() %>%
+  t() %>%
+  as_tibble(rownames = NA)
+
+desc <- desc %>%
+  select(Mean, Stdev, Median, Minimum, Maximum, NAs, nobs)
+
+kable(desc,
+      digits = 3,
+      caption = "Summary Statistics",
+      padding = 0)
+
+```
+
+
+I now reestimate the main results that I mentioned above which are based upon the administrative data. Specifically, I estimate the effect of the treatment (ITT) on the following:
+
+(1) Reports to the local offices in the fifth months since allocation.
+
+(2) Cumulitive reports to the local offices during the first five months since allocation.
+
+(3) The same as the previous points, only for the eighth month.
+
+In this estimation I use many observations which were not available for the midterm report that I mentioned.
+
+```{r warning=FALSE, message=FALSE}
+
+specification <- as.formula(outcome ~ treated | month_lishka_pool + cityid | 0 | month_lishka_pool)
+
+# (1)
+
+Basic_model <- function(data, T) { # This function produces estimates for the `T`th month
+  
+  data_temp <- data %>%
+    filter(spells>=T & t<=T) %>%
+    group_by(jskid) %>%
+    mutate(cumul_apr = sum(apr)) %>%
+    filter(t==T)
+  
+  # Estimate the model and calculate relevant statistics
+  mean_control_T <- mean(data_temp$apr[which(data_temp$treated==0)]) 
+  mean_control_cumul_T <- mean(data_temp$cumul_apr[which(data_temp$treated==0)])
+  
+  model_temp1 <- felm(formula = apr ~ treated | month_lishka_pool + cityid | 0 | month_lishka_pool,
+                     data = data_temp)
+
+  model_temp2 <- felm(formula = cumul_apr ~ treated | month_lishka_pool + cityid | 0 | month_lishka_pool,
+                     data = data_temp)
+  
+  model_row1 <- tidy(model_temp1) %>%
+    mutate(average_in_control = mean_control_T,
+           N = model_temp1$N) %>%
+    filter(term=="treated") %>%
+    select(estimate, std.error, p.value, average_in_control, N ) %>%
+    rename(`Est.` = estimate,
+           SE = std.error,
+           `P-val` = p.value,
+           `Avg. in Control` = average_in_control)
+
+  model_row2 <- tidy(model_temp2) %>%
+    mutate(average_in_control = mean_control_cumul_T,
+           N = model_temp2$N) %>%
+    filter(term=="treated") %>%
+    select(estimate, std.error, p.value, average_in_control, N ) %>%
+    rename(`Est.` = estimate,
+           SE = std.error,
+           `P-val` = p.value,
+           `Avg. in Control` = average_in_control) 
+  
+  rows <- bind_rows(model_row1, model_row2)
+  
+  return(rows)
+  
+}
+
+
+results <- bind_rows(Basic_model(data,5), Basic_model(data,8))
+
+kable(cbind(Outcome = c("Reports rate in the 5th month", 
+                        "Cumul. reports up to the 5th month", 
+                        "Reports rate in the 8th month", 
+                        "Cumul. reports up to the 8th month"), results),
+      digits = 3,
+      caption = "The effect on reports to the local offices",
+      padding = 0)
+
+```
+
+
+The results here indicate a 2.3 percentage points decrease (significant at the 1% level) in reports to the local offices among the treatment group in the fifth month, and to a decrease of 0.05 months (significant at the 1% level) in cumulative reports to the local offices during the first five months since allocation. The results for the eighth month are also in the same directions. The two results are qualitatively with agreement with those reported in the midterm report, however the effects seem quite slim.
+
+
+### Heterogeneity Analysis using *Causal Tree*
+
+Now I turn to the machine learning extension. I will focus here on heterogeneity analysis of the treatment effect on cumulative reports in a 5 month horizon. The variables I include here are both individual level controls and geographic characterizations. I first limit the sample to the relevant observations. In addition, I remove observations with missing data because the methods I will use do not handle them properly (I abstract from attrition problems - about 2%-3% of the observations are dropped). Finally I devide the sample into train and test samples.
+
+```{r}
+
+data <- data %>%
+    filter(spells>=5 & t<=5) %>%
+    group_by(jskid) %>%
+    mutate(cumul_apr = sum(apr)) %>%
+    filter(t==5) %>%
+    ungroup() %>%
+    select(-c("t", "relevant", "real_time", "spells", "cityid", "code", "loc_in_program")) # Removing unnecessary variables
+
+data <- data[complete.cases(data),]
+
+set.seed(1)
+
+train <- data %>%
+  group_by(month_lishka_pool) %>%
+  sample_frac(., 0.5)
+
+test <- anti_join(data, train, by = "jskid")
+
+```
+
+Now there are total of `r nrow(data)` good observations. I am going to use *honest causal tree* estimation, which cannot handle clustered randomization (that is, the random assignment is within allocation unit; it is not random without taking allocation unit into account). Therefore, as an initial step, I orthogonalize all of the variables to the allocation unit (fixed effects) within the train and test sets sepperately. Note that I cannot orthogonalize the treatment varaible since the algorithm only accepts binary treatment. In any case, this will not generate a bias since the final estimation on the test set will include allocatio-unit fixed effects. This probably would generate some inefficiency and generate some variance in the predicted treatment effect. 
+
+```{r}
+
+names <- names(subset(data, select=-c(jskid,treated, month_lishka_pool)))
+train <- lapply(names, function(x) {
+
+  temp <- felm(formula = get(x) ~ 0 | month_lishka_pool | 0 |0 ,data = train)
+  assign(as.character(x),temp$residuals)
+  return(get(x))
+
+}) %>% as.data.frame() %>% mutate(jskid = train$jskid,
+                                  treated = train$treated,
+                                  month_lishka_pool = train$month_lishka_pool)
+
+names(train) <- append(names,c("jskid","treated", "month_lishka_pool"))
+
+test <- lapply(names, function(x) {
+
+  temp <- felm(formula = get(x) ~ 0 | month_lishka_pool | 0 |0 ,data = test)
+  assign(as.character(x),temp$residuals)
+  return(get(x))
+
+}) %>% as.data.frame() %>% mutate(jskid = test$jskid,
+                                  treated = test$treated,
+                                  month_lishka_pool = test$month_lishka_pool)
+
+names(test) <- append(names,c("jskid","treated", "month_lishka_pool"))
+
+```
+
+Now I can fit a tree. Since the expected effects are slim, I set the `minsize` of observations from treatment and control in each terminal node to be rather large - 150.
+
+
+```{r warning=FALSE, message=FALSE}
+
+HonestTree <- honest.causalTree(
+  formula = cumul_apr ~ . - apr - treated - jskid - month_lishka_pool,
+  data = train,
+  treatment = train$treated,
+  est_data = test,
+  est_treatment = test$treated,
+  split.Rule = "CT", 
+  split.Honest = TRUE,
+  HonestSampleSize = nrow(test),
+  split.Bucket = TRUE, 
+  cv.option = "CT",
+  cv.Honest = TRUE, 
+  minsize = 150,
+  na.action=na.omit
+  )
+```
+
+
+Pruning and plotting the tree:
+
+```{r}
+cp <- HonestTree$cptable[,1][which.min(HonestTree$cptable[,4])]
+tree <- prune(HonestTree, cp)
+rpart.plot(tree)
+```
+
+This figure suggests some heterogeneity. However, as noted, these splits do not take allocation unit into account. It is also worth noting that the heterogeneity here is not on account of geographic variance, which may suggest that it is either not so important, or it varries over different dimensions then those that are captured by the given geographic variables.
+
+Now I turn to estimate this suggested heterogeneity using the test set:
+
+```{r warning=FALSE, message=FALSE}
+
+test$terminal_nodes <- predict(tree, test, type="vector")
+test$terminal_nodes <- as.factor(round(test$terminal_nodes, 3))
+
+heter_test <- felm(formula = cumul_apr ~ -1 + terminal_nodes + terminal_nodes:treated | month_lishka_pool | 0 |month_lishka_pool, data = test)
+
+tidy <- tidy(heter_test)
+tidy <- tidy %>%
+  slice(c(nrow(tidy)/2 + 1: nrow(tidy))) %>%
+  select(term, estimate, std.error, p.value)
+
+kable(tidy)
+
+```
+
+Each coefficient corresponds to a terminal node with an estimation similar to the one which appears in the coefficient name ("terminal_nodes????:treated"). The only statistically significant leaf is the one on the left (it captures some intersection of older married arabs). It turns out that the unbalanced grouping can yeild noisy estimates. It is not due to original small sample (on the contrary, it is quite large), but this can be the result of low power and the inefficiency that is the result of not acounting for the stratification properly when growing the tree.
+
+
+
